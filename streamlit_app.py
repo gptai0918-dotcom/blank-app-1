@@ -240,3 +240,64 @@ fig5 = px.bar(
 fig5.update_yaxes(range=[0, step_df["단계전환율"].max() * 1.2])
 fig5.update_layout(xaxis_title="", yaxis_title="단계 전환율 (%)")
 comp_right.plotly_chart(fig5, width="stretch")
+
+# ------------------------------------------------------------
+# 5. 드릴다운: 언제부터, 무엇 때문일까
+# ------------------------------------------------------------
+st.divider()
+st.subheader("드릴다운: 언제부터, 무엇 때문일까")
+
+dd_col1, dd_col2 = st.columns(2)
+
+available_groups = sorted(f[group_col].unique())
+target_group = dd_col1.selectbox("자세히 볼 집단", options=available_groups)
+
+drill_steps = {
+    "방문 → 식당조회": ("세션수", "조회세션"),
+    "식당조회 → 장바구니": ("조회세션", "장바구니세션"),
+    "장바구니 → 결제시작": ("장바구니세션", "결제시작세션"),
+    "결제시작 → 주문": ("결제시작세션", "주문세션"),
+}
+target_step = dd_col2.selectbox("단계", options=list(drill_steps.keys()))
+
+other_col = "유입경로" if group_col == "플랫폼" else "플랫폼"
+prev_c, curr_c = drill_steps[target_step]
+
+# 차트 ① (위): 고른 집단만 남긴 뒤, 다른 축으로 쪼개어 주별 전환율 선 차트
+f_target = f[f[group_col] == target_group]
+dd_weekly = f_target.groupby(["주시작일", other_col], as_index=False)[[prev_c, curr_c]].sum()
+dd_weekly["전환율"] = (
+    dd_weekly[curr_c] / dd_weekly[prev_c].where(dd_weekly[prev_c] > 0) * 100
+).round(1)
+
+fig6 = px.line(
+    dd_weekly,
+    x="주시작일",
+    y="전환율",
+    color=other_col,
+    markers=True,
+    title=f"① {target_group}의 주별 {target_step} 전환율 — {other_col}별로 쪼개 보기",
+)
+fig6.update_layout(xaxis_title="", yaxis_title="전환율 (%)")
+st.plotly_chart(fig6, width="stretch")
+st.caption("모든 갈래가 같은 시점에 함께 움직였다면, 그 축은 원인이 아닙니다.")
+
+# 차트 ② (아래): 주별 결제실패 건수 (고른 집단 vs 그 외)
+fail_df = f.assign(
+    구분=f[group_col].where(f[group_col] == target_group, "그 외")
+)
+fail_weekly = fail_df.groupby(["주시작일", "구분"], as_index=False)["결제실패"].sum()
+
+fig7 = px.bar(
+    fail_weekly,
+    x="주시작일",
+    y="결제실패",
+    color="구분",
+    barmode="group",
+    category_orders={"구분": [target_group, "그 외"]},
+    color_discrete_map={target_group: "#D62728", "그 외": "#B0B0B0"},
+    title=f"② 주별 결제실패 건수 — {target_group} vs 그 외",
+)
+fig7.update_layout(xaxis_title="", yaxis_title="결제실패 건수")
+st.plotly_chart(fig7, width="stretch")
+st.caption("문제가 생긴 시점과 함께 움직였다면 원인 후보입니다. 함께 움직였다고 원인이 확정되지는 않습니다.")
