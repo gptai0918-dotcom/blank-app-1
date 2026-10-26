@@ -152,3 +152,91 @@ fig3 = px.bar(ws, x="주문전환율", y="유입경로", orientation="h", text_a
 fig3.update_xaxes(range=[0, ws["주문전환율"].max() * 1.2])
 fig3.update_layout(xaxis_title="주문 전환율 (%)", yaxis_title="")
 st.plotly_chart(fig3, width="stretch")
+
+# ------------------------------------------------------------
+# 4. 집단 비교
+# ------------------------------------------------------------
+st.divider()
+st.subheader("집단 비교")
+
+group_col = st.radio("비교 기준", options=["플랫폼", "유입경로"], horizontal=True)
+
+step_cols = list(steps.values())
+step_names = list(steps.keys())
+grp = f.groupby(group_col, as_index=False)[step_cols].sum()
+
+# 세션 수 500개 미만 집단 안내
+small_groups = grp[grp["세션수"] < 500][group_col].tolist()
+if small_groups:
+    st.caption(
+        f"⚠️ 세션 수가 500개 미만인 집단({', '.join(map(str, small_groups))})이 포함되어 있어 값이 크게 흔들릴 수 있습니다."
+    )
+
+cum_rows = []
+step_rows = []
+
+for _, row in grp.iterrows():
+    g_name = row[group_col]
+    base_sessions = row["세션수"]
+
+    # 1) 누적 전환율 데이터 (첫 단계 대비 %)
+    for s_name, s_col in steps.items():
+        s_val = row[s_col]
+        cum_rate = round(s_val / base_sessions * 100, 1) if base_sessions > 0 else 0.0
+        cum_rows.append(
+            {
+                group_col: g_name,
+                "단계": s_name,
+                "누적전환율": cum_rate,
+                "세션수": int(s_val),
+            }
+        )
+
+    # 2) 단계 전환율 데이터 (직전 단계 대비 %)
+    for i in range(1, len(step_cols)):
+        prev_col = step_cols[i - 1]
+        curr_col = step_cols[i]
+        prev_val = row[prev_col]
+        curr_val = row[curr_col]
+        s_rate = round(curr_val / prev_val * 100, 1) if prev_val > 0 else 0.0
+        step_rows.append(
+            {
+                group_col: g_name,
+                "단계": f"{step_names[i - 1]} → {step_names[i]}",
+                "단계전환율": s_rate,
+                "기준세션": int(prev_val),
+                "도달세션": int(curr_val),
+            }
+        )
+
+cum_df = pd.DataFrame(cum_rows)
+step_df = pd.DataFrame(step_rows)
+
+comp_left, comp_right = st.columns(2)
+
+# 왼쪽: 누적 전환율(%) 퍼널
+fig4 = px.funnel(
+    cum_df,
+    x="누적전환율",
+    y="단계",
+    color=group_col,
+    hover_data=["세션수"],
+    title=f"{group_col}별 누적 전환율 퍼널 (방문 대비 %)",
+)
+fig4.update_layout(xaxis_title="누적 전환율 (%)", yaxis_title="")
+comp_left.plotly_chart(fig4, width="stretch")
+
+# 오른쪽: 단계 전환율(%) 막대
+fig5 = px.bar(
+    step_df,
+    x="단계",
+    y="단계전환율",
+    color=group_col,
+    barmode="group",
+    text_auto=".1f",
+    hover_data=["기준세션", "도달세션"],
+    title=f"{group_col}별 단계 전환율 (직전 단계 대비 %)",
+)
+fig5.update_yaxes(range=[0, step_df["단계전환율"].max() * 1.2])
+fig5.update_layout(xaxis_title="", yaxis_title="단계 전환율 (%)")
+comp_right.plotly_chart(fig5, width="stretch")
