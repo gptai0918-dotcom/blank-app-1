@@ -98,11 +98,23 @@ sel_platforms = st.sidebar.multiselect("플랫폼", options=platforms, default=p
 sources = sorted(df["유입경로"].unique())
 sel_sources = st.sidebar.multiselect("유입 경로", options=sources, default=sources)
 
-f = df[
-    (df["주시작일"] >= start_w)
-    & (df["주시작일"] <= end_w)
-    & (df["플랫폼"].isin(sel_platforms))
+base_start_w, base_end_w = st.sidebar.select_slider(
+    "평소 범위 기준 기간",
+    options=weeks,
+    value=(weeks[0], weeks[min(25, len(weeks) - 1)]),
+    help="문제가 없던 기간을 고르세요. 이 기간의 주별 값 범위를 '평소 범위'로 씁니다.",
+)
+
+# 집단 조건(플랫폼·유입경로)만 적용한 데이터 g
+g = df[
+    (df["플랫폼"].isin(sel_platforms))
     & (df["유입경로"].isin(sel_sources))
+]
+
+# g에 기간 조건을 더해 만든 데이터 f
+f = g[
+    (g["주시작일"] >= start_w)
+    & (g["주시작일"] <= end_w)
 ]
 
 if f.empty:
