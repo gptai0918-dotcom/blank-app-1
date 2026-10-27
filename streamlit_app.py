@@ -133,6 +133,50 @@ c1.metric("세션 수", f"{t['세션수']:,}개")
 c2.metric("주문 전환율 (방문 → 주문)", f"{rate(t['주문세션'], t['세션수']):.1f}%")
 c3.metric("결제 전환율 (결제 시작 → 주문)", f"{rate(t['주문세션'], t['결제시작세션']):.1f}%")
 
+# ------------------------------------------------------------
+# 2-1. 규칙 기반 설명 문장 2개
+# ------------------------------------------------------------
+f_weekly = f.groupby("주시작일", as_index=False)[["세션수", "결제시작세션", "주문세션"]].sum().sort_values("주시작일")
+g_base = g[(g["주시작일"] >= base_start_w) & (g["주시작일"] <= base_end_w)]
+g_base_weekly = g_base.groupby("주시작일", as_index=False)[["세션수", "결제시작세션", "주문세션"]].sum().sort_values("주시작일")
+
+def make_rule_msg(label, num_col, den_col):
+    if len(f_weekly) < 4:
+        return f"**{label}**: 비교하려면 선택 기간을 4주 이상 골라 주세요."
+    
+    valid_base = g_base_weekly[g_base_weekly[den_col] > 0]
+    if len(valid_base) < 4:
+        return f"**{label}**: 기준 기간을 이 집단의 데이터가 있는 시기로 옮겨 주세요."
+    
+    last4 = f_weekly.tail(4)
+    start_4w = last4["주시작일"].iloc[0]
+    curr_val = rate(last4[num_col].sum(), last4[den_col].sum())
+    
+    base_rates = valid_base[num_col] / valid_base[den_col] * 100
+    low, high = base_rates.min(), base_rates.max()
+    
+    if curr_val < low:
+        diff = low - curr_val
+        return (
+            f"**{label}**: {start_4w} 주부터 4주 동안 **{curr_val:.1f}%**로, "
+            f"평소 범위({low:.1f}% ~ {high:.1f}%)보다 **{diff:.1f}%p** 낮습니다."
+        )
+    elif curr_val > high:
+        diff = curr_val - high
+        return (
+            f"**{label}**: {start_4w} 주부터 4주 동안 **{curr_val:.1f}%**로, "
+            f"평소 범위({low:.1f}% ~ {high:.1f}%)보다 **{diff:.1f}%p** 높습니다."
+        )
+    else:
+        return (
+            f"**{label}**: {start_4w} 주부터 4주 동안 **{curr_val:.1f}%**로, "
+            f"평소 범위({low:.1f}% ~ {high:.1f}%) 안에 있습니다."
+        )
+
+st.info(make_rule_msg("결제 전환율", "주문세션", "결제시작세션"))
+st.info(make_rule_msg("주문 전환율", "주문세션", "세션수"))
+st.caption(f"📏 자동 계산 · 평소 범위 기준 기간 {base_start_w} ~ {base_end_w} (주별 값)")
+
 st.divider()
 
 # ------------------------------------------------------------
