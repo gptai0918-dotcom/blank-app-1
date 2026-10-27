@@ -15,14 +15,14 @@ st.caption("주별 세션 퍼널 | 플랫폼 · 유입 경로별 | 2025.07 ~ 202
 # ------------------------------------------------------------
 # 0. 필요한 데이터만 추출 — 쓸 테이블과 컬럼만 메모리 DB에 올리고, 정제 테이블 events를 처음 한 번만 만듦
 # ------------------------------------------------------------
-DATA_DIR = "data"                          # 원본 CSV를 넣어 둔 폴더
+DATA_DIR = "data"                         # 원본 CSV를 넣어 둔 폴더
 NEEDED = {                                 # 이번 대시보드에 필요한 테이블과 컬럼
     "app_events": ["event_id", "event_datetime", "customer_id", "session_id",
                    "event_name", "platform", "traffic_source"],
 }
 
 @st.cache_resource
-def get_db():                              # 필요한 컬럼만 메모리 DB에 올리고, 정제 테이블 events를 만듦 (처음 한 번만)
+def get_db():                             # 필요한 컬럼만 메모리 DB에 올리고, 정제 테이블 events를 만듦 (처음 한 번만)
     con = sqlite3.connect(":memory:", check_same_thread=False)
     for name, cols in NEEDED.items():
         pd.read_csv(f"{DATA_DIR}/{name}.csv", usecols=cols).to_sql(name, con, index=False)
@@ -32,7 +32,7 @@ def get_db():                              # 필요한 컬럼만 메모리 DB에
         SELECT event_id, event_datetime, customer_id, session_id, event_name, platform, traffic_source
           FROM (SELECT *,
                        ROW_NUMBER() OVER (PARTITION BY session_id, event_datetime, event_name
-                                            ORDER BY event_id) AS dup
+                                          ORDER BY event_id) AS dup
                   FROM app_events
                  WHERE customer_id NOT LIKE 'QA%')
          WHERE dup = 1
@@ -57,11 +57,11 @@ WITH s AS (                                -- 세션의 첫 이벤트로 플랫�
      GROUP BY session_id
 )
 SELECT s.주시작일,
-       s.platform       AS 플랫폼,
+       s.platform     AS 플랫폼,
        s.traffic_source AS 유입경로,
-       COUNT(DISTINCT e.session_id)                                                       AS 세션수,
+       COUNT(DISTINCT e.session_id)                                                    AS 세션수,
        COUNT(DISTINCT CASE WHEN e.event_name = 'view_restaurant' THEN e.session_id END)   AS 조회세션,
-       COUNT(DISTINCT CASE WHEN e.event_name = 'add_to_cart'     THEN e.session_id END)   AS 장바구니세션,
+       COUNT(DISTINCT CASE WHEN e.event_name = 'add_to_cart'    THEN e.session_id END)   AS 장바구니세션,
        COUNT(DISTINCT CASE WHEN e.event_name = 'begin_checkout'  THEN e.session_id END)   AS 결제시작세션,
        COUNT(DISTINCT CASE WHEN e.event_name = 'order_complete'  THEN e.session_id END)   AS 주문세션,
        SUM(CASE WHEN e.event_name = 'payment_fail' THEN 1 ELSE 0 END)                     AS 결제실패
@@ -78,7 +78,19 @@ def load_data():
     data["주시작일"] = pd.to_datetime(data["주시작일"]).dt.date
     return data
 
-df = load_data()                           # 주 × 플랫폼 × 유입 경로별 세션 퍼널
+df = load_data()                         # 주 × 플랫폼 × 유입 경로별 세션 퍼널
+
+AI_NOTES = {
+    "전체": "총 세션수는 28,840개이며 주문 전환율은 14.5%, 가장 낮은 단계 전환율은 조회세션에서 장바구니세션으로 이어지는 단계의 41.4%다. 전체 평균 결제 전환율은 80.5% 수준을 기록했다. 이 퍼널 구조는 초기 탐색 단계에서 이탈이 가장 빈번히 일어나는 구조로 보인다.",
+    "Android": "총 세션수는 16,053개이며 주문 전환율은 14.3%, 결제 전환율은 76.8%, 가장 낮은 단계 전환율은 41.8%였다. 전체 평균과 유사한 흐름을 보였으나 2026-04-13 주부터 2026-05-25 주까지 결제 전환율 하락과 결제실패 증가가 집중적으로 관측됐다. 해당 기간 외부 요인에 따른 결제 프로세스 이상 여부의 확인이 필요하다.",
+    "iOS": "총 세션수는 12,787개이며 주문 전환율은 14.8%, 결제 전환율은 85.5%, 가장 낮은 단계 전환율은 40.8%였다. Android 대비 결제 전환율이 전반적으로 높게 유지되었으며 2025년 하반기 범위와 유사한 안정세를 보였다. iOS 환경은 결제 완료 단계까지의 안정성이 비교적 높게 유지된 것으로 보인다.",
+    "organic": "총 세션수는 22,489개로 전체 유입의 대다수를 차지하며 주문 전환율은 16.0%, 결제 전환율은 80.4%, 가장 낮은 단계 전환율은 41.4%였다. 전체 평균 대비 주문 전환율이 소폭 높고 안정적인 유입 효율을 나타냈다. 자연 유입 사용자의 서비스 관여도가 상대적으로 견조했던 것으로 보인다.",
+    "paid_ad": "총 세션수는 1,595개이며 주문 전환율은 26.3%, 결제 전환율은 90.3%, 가장 낮은 단계 전환율은 53.7%였다. 다른 유입경로와 비교해 모든 퍼널 단계별 전환율과 주문 전환율이 가장 높았다. 광고를 통해 유입된 사용자의 구매 의도가 매우 뚜렷했던 것으로 보인다.",
+    "push": "총 세션수는 4,635개이며 주문 전환율은 3.2%, 결제 전환율은 63.8%, 가장 낮은 단계 전환율은 세션수에서 조회세션으로 이어진 단계의 28.4%였다. 다른 집단과 달리 첫 단계인 조회 진입 전환율이 가장 낮았으며 2026-02-02 주차부터 처음 등장했다. 푸시 메시지를 통한 초기 유입 유도 방식의 효과성 검토가 필요하다.",
+    "referral": "총 세션수는 121개로 집단 크기(세션 수)가 500개 미만이며 주문 전환율은 0.0%, 결제 전환율은 0.0%, 가장 낮은 단계 전환율은 결제시작세션에서 주문세션으로 이어진 단계의 0.0%였다. 다른 집단과 달리 결제시작 단계 이후 주문으로 전환된 세션이 전혀 존재하지 않았다. 표본 수가 극히 적어 구조적 문제인지 단순 표본 오차인지 확인이 필요하다."
+}
+
+AI_SOURCE = "bot: Gemini가 미리 만든 해설 · 전체 기간 기준"
 
 # ------------------------------------------------------------
 # 1-1. 사이드바 필터
@@ -192,6 +204,10 @@ def make_rule_msg(label, num_col, den_col):
 st.info(make_rule_msg("결제 전환율", "주문세션", "결제시작세션"))
 st.info(make_rule_msg("주문 전환율", "주문세션", "세션수"))
 st.caption(f"📏 자동 계산 · 평소 범위 기준 기간 {base_start_w} ~ {base_end_w} (주별 값)")
+
+with st.expander("🤖 AI 해설 · 전체", expanded=False):
+    st.write(AI_NOTES.get("전체", "이 집단의 해설은 아직 없습니다."))
+st.caption(AI_SOURCE)
 
 st.divider()
 
@@ -373,3 +389,7 @@ fig7 = px.bar(
 fig7.update_layout(xaxis_title="", yaxis_title="결제실패 건수")
 st.plotly_chart(fig7, width="stretch")
 st.caption("문제가 생긴 시점과 함께 움직였다면 원인 후보입니다. 함께 움직였다고 원인이 확정되지는 않습니다.")
+
+with st.expander(f"🤖 AI 해설 · {target_group}", expanded=False):
+    st.write(AI_NOTES.get(target_group, "이 집단의 해설은 아직 없습니다."))
+st.caption(AI_SOURCE)
