@@ -117,6 +117,22 @@ f = g[
     & (g["주시작일"] <= end_w)
 ]
 
+# 사이드바 다운로드 영역 추가
+st.sidebar.html("<hr style='margin: 20px 0;'>")
+dl_c1, dl_c2 = st.sidebar.columns(2)
+dl_c1.download_button(
+    "전체 다운로드",
+    df.to_csv(index=False, encoding="utf-8-sig"),
+    "전체_데이터.csv",
+    "text/csv",
+)
+dl_c2.download_button(
+    "부분 다운로드",
+    f.to_csv(index=False, encoding="utf-8-sig"),
+    "필터적용_데이터.csv",
+    "text/csv",
+)
+
 if f.empty:
     st.warning("선택한 조건에 해당하는 데이터가 없습니다. 필터를 바꿔 주세요.")
     st.stop()
