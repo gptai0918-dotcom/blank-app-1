@@ -1,15 +1,8 @@
-"""
-7주차 1번 수업 — 시작 코드 (필터 없음)
-6주차 시각화 리포트와 같은 형태입니다. 오늘 여기에 필터를 붙여 대시보드로 만듭니다.
-"""
 import sqlite3
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-
-import plotly.express as px
-import streamlit as st          # ← 찾은 줄
 
 ACCENT, GRAY = "#155AC0", "#AD2133"          # ← 여기부터 추가
 px.defaults.color_discrete_map = {
@@ -32,17 +25,23 @@ NEEDED = {                                 # 이번 대시보드에 필요한 �
 }
 
 @st.cache_resource
-def get_db():                              # 필요한 컬럼만 메모리 DB에 올리고, 정제 테이블 events를 만듦 (처음 한 번만)
+def get_db(uploaded_bytes):
     con = sqlite3.connect(":memory:", check_same_thread=False)
-    for name, cols in NEEDED.items():
-        pd.read_csv(f"{DATA_DIR}/{name}.csv", usecols=cols).to_sql(name, con, index=False)
+    if uploaded_bytes is not None:
+        from io import BytesIO
+        df_raw = pd.read_csv(BytesIO(uploaded_bytes))
+        df_raw.to_sql("app_events", con, index=False)
+    else:
+        for name, cols in NEEDED.items():
+            pd.read_csv(f"{DATA_DIR}/{name}.csv", usecols=cols).to_sql(name, con, index=False)
+            
     # 5주차 제외 규칙: QA 계정 제외 · 중복 이벤트 제거
     con.execute("""
         CREATE TABLE events AS
         SELECT event_id, event_datetime, customer_id, session_id, event_name, platform, traffic_source
           FROM (SELECT *,
                        ROW_NUMBER() OVER (PARTITION BY session_id, event_datetime, event_name
-                                            ORDER BY event_id) AS dup
+                                          ORDER BY event_id) AS dup
                   FROM app_events
                  WHERE customer_id NOT LIKE 'QA%')
          WHERE dup = 1
@@ -55,8 +54,8 @@ def get_db():                              # 필요한 컬럼만 메모리 DB에
 # 1. 데이터 준비 — 정제된 events 테이블을 SQL로 집계
 # ------------------------------------------------------------
 @st.cache_data
-def query(sql):                            # SQL을 실행해 표로 돌려줌
-    return pd.read_sql(sql, get_db())
+def query(sql, uploaded_bytes):                   # SQL을 실행해 표로 돌려줌
+    return pd.read_sql(sql, get_db(uploaded_bytes))
 
 # 주 × 플랫폼 × 유입 경로별 세션 퍼널
 SQL_WEEKLY_FUNNEL = """
@@ -69,7 +68,7 @@ WITH s AS (                                -- 세션의 첫 이벤트로 플랫�
 SELECT s.주시작일,
        s.platform     AS 플랫폼,
        s.traffic_source AS 유입경로,
-       COUNT(DISTINCT e.session_id)                                                   AS 세션수,
+       COUNT(DISTINCT e.session_id)                                                       AS 세션수,
        COUNT(DISTINCT CASE WHEN e.event_name = 'view_restaurant' THEN e.session_id END)   AS 조회세션,
        COUNT(DISTINCT CASE WHEN e.event_name = 'add_to_cart'    THEN e.session_id END)   AS 장바구니세션,
        COUNT(DISTINCT CASE WHEN e.event_name = 'begin_checkout'  THEN e.session_id END)   AS 결제시작세션,
@@ -77,18 +76,40 @@ SELECT s.주시작일,
        SUM(CASE WHEN e.event_name = 'payment_fail' THEN 1 ELSE 0 END)                     AS 결제실패
   FROM events e
   JOIN s ON e.session_id = s.session_id
- WHERE s.주시작일 < '2026-06-29'            -- 이틀치뿐인 마지막 주 제외
+ WHERE s.주시작일 < '2026-06-29'           -- 이틀치뿐인 마지막 주 제외
  GROUP BY 1, 2, 3
  ORDER BY 1, 2, 3
 """
 
 @st.cache_data
-def load_data():
-    data = query(SQL_WEEKLY_FUNNEL)
+def load_data(uploaded_bytes):
+    data = query(SQL_WEEKLY_FUNNEL, uploaded_bytes)
     data["주시작일"] = pd.to_datetime(data["주시작일"]).dt.date
     return data
 
-df = load_data()                         # 주 × 플랫폼 × 유입 경로별 세션 퍼널
+# ------------------------------------------------------------
+# 📤 데이터 업로드 및 파일 전처리의 영역 (캐시 함수 밖)
+# ------------------------------------------------------------
+uploaded_file = st.session_state.get("upload_file")
+uploaded_bytes = None
+data_source_text = "data 폴더 기본 파일"
+
+if uploaded_file is not None:
+    uploaded_bytes = uploaded_file.getvalue()
+    raw_df_preview = pd.read_csv(io_bytes := io.BytesIO(uploaded_bytes) if 'io' in globals() else pd.read_csv(uploaded_file)) if False else pd.read_csv(io.BytesIO(uploaded_bytes))
+    
+    required_cols = {"event_id", "event_datetime", "customer_id", "session_id", "event_name", "platform", "traffic_source"}
+    missing_cols = required_cols - set(raw_df_preview.columns)
+    
+    if missing_cols:
+        st.error(f"업로드한 파일에 필요한 컬럼이 누락되었습니다: {', '.join(missing_cols)}. 기본 파일을 사용합니다.")
+        uploaded_bytes = None
+    else:
+        # 파일 이름 정하기
+        file_name = getattr(uploaded_file, "name", "uploaded_file.csv")
+        data_source_text = f"올린 파일 {file_name}"
+
+df = load_data(uploaded_bytes)         # 주 × 플랫폼 × 유입 경로별 세션 퍼널
 
 AI_NOTES = {
     "전체": "총 세션수는 28,840개이며 주문 전환율은 14.5%, 가장 낮은 단계 전환율은 조회세션에서 장바구니세션으로 이어지는 단계의 41.4%다. 전체 평균 결제 전환율은 80.5% 수준을 기록했다. 이 퍼널 구조는 초기 탐색 단계에서 이탈이 가장 빈번히 일어나는 구조로 보인다.",
@@ -107,6 +128,13 @@ AI_SOURCE = "bot: Gemini가 미리 만든 해설 · 전체 기간 기준"
 # ------------------------------------------------------------
 if "reset_seq" not in st.session_state:
     st.session_state["reset_seq"] = 0
+
+# 업로드된 파일 변경 감지를 위한 상태 관리
+if "prev_uploaded_file" not in st.session_state:
+    st.session_state["prev_uploaded_file"] = uploaded_file
+elif st.session_state["prev_uploaded_file"] != uploaded_file:
+    st.session_state["reset_seq"] += 1
+    st.session_state["prev_uploaded_file"] = uploaded_file
 
 st.sidebar.header("필터")
 if st.sidebar.button("필터 초기화", width="stretch"):
@@ -201,16 +229,21 @@ elif len(sel_sources) == 0:
 else:
     src_txt = ", ".join(sel_sources)
 
-st.caption(f"🔎 보고 있는 조건: {period_txt} · 플랫폼 {plat_txt} · 유입 경로 {src_txt}")
+st.caption(f"🔎 보고 있는 조건: 데이터 ({data_source_text}) · 기간 {period_txt} · 플랫폼 {plat_txt} · 유입 경로 {src_txt}")
+
+# ------------------------------------------------------------
+# 탭 구성 (📤 데이터 업로드 탭 추가 및 st.stop 조건 위치 조정)
+# ------------------------------------------------------------
+tab1, tab2, tab3, tab4 = st.tabs(["📊 개요", "🔍 탐색", "✅ 액션", "📤 데이터 업로드"])
+
+with tab4:
+    st.subheader("데이터 파일 직접 업로드")
+    st.write("분석에 사용할 사용자 행동 데이터(CSV)를 업로드하세요. 서버에 저장되지 않고 브라우저 세션 동안만 메모리에서 처리됩니다.")
+    st.file_uploader("app_events.csv 올리기", type="csv", key="upload_file")
 
 if f.empty:
     st.warning("선택한 조건에 해당하는 데이터가 없습니다. 필터를 바꿔 주세요.")
     st.stop()
-
-# ------------------------------------------------------------
-# 탭 구성
-# ------------------------------------------------------------
-tab1, tab2, tab3 = st.tabs(["📊 개요", "🔍 탐색", "✅ 액션"])
 
 with tab1:
     st.caption("전체 핵심 지표와 주별 추이, 퍼널 및 유입 경로별 전환율을 한눈에 확인합니다.")
