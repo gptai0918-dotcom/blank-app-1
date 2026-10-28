@@ -129,7 +129,7 @@ sel_sources = st.sidebar.multiselect(
     key=f"sources_{k}",
 )
 
-# '평소 범위 기준 기간'만 고급 설정 expander 안에 배치
+# '평소 범위 기준 기간'과 '세션 500개 미만 집단 제외'를 고급 설정 expander 안에 배치
 with st.sidebar.expander("고급 설정", expanded=True):
     base_start_w, base_end_w = st.select_slider(
         "평소 범위 기준 기간",
@@ -138,13 +138,11 @@ with st.sidebar.expander("고급 설정", expanded=True):
         help="문제가 없던 기간을 고르세요. 이 기간의 주별 값 범위를 '평소 범위'로 씁니다.",
         key=f"base_period_{k}",
     )
-
-# '세션 500개 미만 집단 제외' 체크박스는 사이드바 메인 영역에 배치
-exclude_small = st.sidebar.checkbox(
-    "세션 500개 미만 집단 제외 (집단 비교 · 드릴다운)",
-    value=False,
-    key=f"exclude_small_{k}",
-)
+    exclude_small = st.checkbox(
+        "세션 500개 미만 집단 제외 (집단 비교 · 드릴다운)",
+        value=False,
+        key=f"exclude_small_{k}",
+    )
 
 # 집단 조건(플랫폼·유입경로)만 적용한 데이터 g
 g = df[
@@ -541,4 +539,59 @@ with tab2:
 
 with tab3:
     st.caption("탐색 결과에 따른 권장 액션과 후속 과제를 확인합니다.")
-    st.caption("액션 카드는 다음 단계에서 추가합니다.")
+    st.caption("측정 KPI의 현재 값은 선택한 기간의 마지막 4주로 계산합니다")
+
+    # 액션 탭 데이터 계산용 함수 (사이드바 기간 필터만 적용, 플랫폼/유입경로 필터 무시)
+    def get_action_f_weekly(target_col, target_val):
+        sub_g = df[df[target_col] == target_val]
+        sub_f = sub_g[(sub_g["주시작일"] >= start_w) & (sub_g["주시작일"] <= end_w)]
+        return sub_f.groupby("주시작일", as_index=False)[["세션수", "조회세션", "결제시작세션", "주문세션"]].sum().sort_values("주시작일")
+
+    def calc_metric_val(sub_f_weekly, num_col, den_col):
+        if len(sub_f_weekly) < 4:
+            return None
+        last4 = sub_f_weekly.tail(4)
+        den_sum = last4[den_col].sum()
+        if den_sum == 0:
+            return 0.0
+        return last4[num_col].sum() / den_sum * 100
+
+    # 카드 1용 데이터: 플랫폼 == "Android"
+    f_android = get_action_f_weekly("플랫폼", "Android")
+    val_android = calc_metric_val(f_android, "주문세션", "결제시작세션")
+
+    # 카드 2용 데이터: 유입경로 == "push"
+    f_push = get_action_f_weekly("유입경로", "push")
+    val_push = calc_metric_val(f_push, "조회세션", "세션수")
+
+    col_a1, col_a2 = st.columns(2)
+
+    with col_a1:
+        with st.container(border=True):
+            st.markdown("**문제 · 근거 · 성격 · 액션 · 우선순위**")
+            st.markdown("- **문제**: Android 환경에서 결제 실패 증가 및 결제 전환율 하락 집중 관측")
+            st.markdown("- **근거**: 2026-04-13 주부터 2026-05-25 주까지 Android의 결제 전환율 하락과 결제실패 건수 급증")
+            st.markdown("- **성격**: 시스템 · 외부 요인")
+            st.markdown("- **액션**: Android 결제 프로세스 오류 점검 및 PG사 연동 상태 확인")
+            st.markdown("- **우선순위**: 높음")
+        
+        if val_android is None:
+            col_a1.metric("Android 결제 전환율 (마지막 4주)", "데이터 없음")
+        else:
+            col_a1.metric("Android 결제 전환율 (마지막 4주)", f"{val_android:.1f}%")
+        st.caption("대시보드에서: 개요 탭 '주별 결제 전환율 (플랫폼별)' 선 차트 및 탐색 탭 '드릴다운' 차트 ②")
+
+    with col_a2:
+        with st.container(border=True):
+            st.markdown("**문제 · 근거 · 성격 · 액션 · 우선순위**")
+            st.markdown("- **문제**: 푸시(push) 유입 세션의 초기 조회 진입 전환율 극단적 저조")
+            st.markdown("- **근거**: 푸시 유입의 첫 단계(방문→조회) 전환율이 28.4%로 전 집단 중 최저 수준 기록")
+            st.markdown("- **성격**: 마케팅 · 콘텐츠")
+            st.markdown("- **액션**: 푸시 메시지 문구 및 랜딩 페이지(링크) 연결 상태 최적화")
+            st.markdown("- **우선순위**: 중간")
+        
+        if val_push is None:
+            col_a2.metric("Push 방문 → 식당 조회 전환율 (마지막 4주)", "데이터 없음")
+        else:
+            col_a2.metric("Push 방문 → 식당 조회 전환율 (마지막 4주)", f"{val_push:.1f}%")
+        st.caption("대시보드에서: 탐색 탭 '집단 비교' 퍼널 차트 및 세부 수치")
