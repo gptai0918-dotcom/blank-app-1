@@ -8,6 +8,16 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+import plotly.express as px
+import streamlit as st          # ← 찾은 줄
+
+ACCENT, GRAY = "#155AC0", "#AD2133"          # ← 여기부터 추가
+px.defaults.color_discrete_map = {
+    "Android": ACCENT, "iOS": GRAY,
+    "push": ACCENT, "organic": "#8B8585", "paid_ad": GRAY, "referral": "#9E7777",
+}
+px.defaults.color_discrete_sequence = [GRAY]
+
 st.set_page_config(page_title="사용자 행동 탐색 대시보드", layout="wide")
 st.title("사용자 행동 탐색 대시보드")
 st.caption("주별 세션 퍼널 | 플랫폼 · 유입 경로별 | 2025.07 ~ 2026.06")
@@ -213,9 +223,9 @@ with tab1:
 
     t = f[["세션수", "결제시작세션", "주문세션"]].sum()
     c1, c2, c3 = st.columns(3)
-    c1.metric("세션 수", f"{t['세션수']:,}개")
-    c2.metric("주문 전환율 (방문 → 주문)", f"{rate(t['주문세션'], t['세션수']):.1f}%")
-    c3.metric("결제 전환율 (결제 시작 → 주문)", f"{rate(t['주문세션'], t['결제시작세션']):.1f}%")
+    c1.metric("세션 수", f"{t['세션수']:,}개", border=True, help="선택한 조건의 전체 세션")
+    c2.metric("누적 주문 전환율", f"{rate(t['주문세션'], t['세션수']):.1f}%", border=True, help="주문 세션 ÷ 전체 세션")
+    c3.metric("결제 단계 전환율", f"{rate(t['주문세션'], t['결제시작세션']):.1f}%", border=True, help="주문 세션 ÷ 결제 시작 세션")
 
     # ------------------------------------------------------------
     # 2-1. 규칙 기반 설명 문장 2개
@@ -272,7 +282,7 @@ with tab1:
     # ------------------------------------------------------------
     # 3. 차트
     # ------------------------------------------------------------
-    left, right = st.columns(2)
+    left, right = st.columns(2, border=True)
 
     # 3-1. 주별 결제 전환율 (플랫폼별)
     wp = f.groupby(["주시작일", "플랫폼"])[["결제시작세션", "주문세션"]].sum().reset_index()
@@ -331,8 +341,10 @@ with tab1:
         },
     )
     fig3.update_xaxes(range=[0, ws["주문전환율"].max() * 1.2])
-    fig3.update_layout(xaxis_title="주문 전환율 (%)", yaxis_title="")
-    st.plotly_chart(fig3, width="stretch")
+    fig3.update_layout(xaxis_title="주문 전환율 (%)", yaxis_title="유입 경로")
+    fig3.update_traces(marker_color=[ACCENT if s == "push" else GRAY for s in ws["유입경로"]])   # ← 추가
+    fig3.update_xaxes(visible=False)          # ← 추가
+    st.plotly_chart(fig3, width="stretch")    # ← 찾은 줄
 
 with tab2:
     st.caption("플랫폼·유입 경로별로 전환율을 비교하고, 문제 발생 시점과 원인을 자세히 드릴다운합니다.")
