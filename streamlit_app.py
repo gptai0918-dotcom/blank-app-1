@@ -93,30 +93,58 @@ AI_NOTES = {
 AI_SOURCE = "bot: Gemini가 미리 만든 해설 · 전체 기간 기준"
 
 # ------------------------------------------------------------
-# 1-1. 사이드바 필터
+# 1-1. 사이드바 필터 (key 번호 증가 방식 초기화 포함)
 # ------------------------------------------------------------
+if "reset_seq" not in st.session_state:
+    st.session_state["reset_seq"] = 0
+
 st.sidebar.header("필터")
+if st.sidebar.button("필터 초기화", width="stretch"):
+    st.session_state["reset_seq"] += 1
+    st.rerun()
+
+k = st.session_state["reset_seq"]
 
 weeks = sorted(df["주시작일"].unique())
 start_w, end_w = st.sidebar.select_slider(
     "기간",
     options=weeks,
     value=(weeks[0], weeks[-1]),
+    key=f"period_{k}",
 )
 
 platforms = sorted(df["플랫폼"].unique())
-sel_platforms = st.sidebar.multiselect("플랫폼", options=platforms, default=platforms)
+sel_platforms = st.sidebar.multiselect(
+    "플랫폼",
+    options=platforms,
+    default=platforms,
+    key=f"platforms_{k}",
+)
 
 sources = sorted(df["유입경로"].unique())
-sel_sources = st.sidebar.multiselect("유입 경로", options=sources, default=sources)
+sel_sources = st.sidebar.multiselect(
+    "유입 경로",
+    options=sources,
+    default=sources,
+    key=f"sources_{k}",
+)
 
-with st.sidebar.expander("고급 설정"):
+# '평소 범위 기준 기간'만 고급 설정 expander 안에 배치
+with st.sidebar.expander("고급 설정", expanded=True):
     base_start_w, base_end_w = st.select_slider(
         "평소 범위 기준 기간",
         options=weeks,
         value=(weeks[0], weeks[min(25, len(weeks) - 1)]),
         help="문제가 없던 기간을 고르세요. 이 기간의 주별 값 범위를 '평소 범위'로 씁니다.",
+        key=f"base_period_{k}",
     )
+
+# '세션 500개 미만 집단 제외' 체크박스는 사이드바 메인 영역에 배치
+exclude_small = st.sidebar.checkbox(
+    "세션 500개 미만 집단 제외 (집단 비교 · 드릴다운)",
+    value=False,
+    key=f"exclude_small_{k}",
+)
 
 # 집단 조건(플랫폼·유입경로)만 적용한 데이터 g
 g = df[
@@ -145,6 +173,27 @@ dl_c2.download_button(
     "필터적용_데이터.csv",
     "text/csv",
 )
+
+# ------------------------------------------------------------
+# 보고 있는 조건 요약 캡션 (제목 아래 · 탭 위)
+# ------------------------------------------------------------
+period_txt = "전체" if (start_w == weeks[0] and end_w == weeks[-1]) else f"{start_w} ~ {end_w}"
+
+if len(sel_platforms) == len(platforms):
+    plat_txt = "전체"
+elif len(sel_platforms) == 0:
+    plat_txt = "선택 없음"
+else:
+    plat_txt = ", ".join(sel_platforms)
+
+if len(sel_sources) == len(sources):
+    src_txt = "전체"
+elif len(sel_sources) == 0:
+    src_txt = "선택 없음"
+else:
+    src_txt = ", ".join(sel_sources)
+
+st.caption(f"🔎 보고 있는 조건: {period_txt} · 플랫폼 {plat_txt} · 유입 경로 {src_txt}")
 
 if f.empty:
     st.warning("선택한 조건에 해당하는 데이터가 없습니다. 필터를 바꿔 주세요.")
@@ -230,8 +279,21 @@ with tab1:
     # 3-1. 주별 결제 전환율 (플랫폼별)
     wp = f.groupby(["주시작일", "플랫폼"])[["결제시작세션", "주문세션"]].sum().reset_index()
     wp["결제전환율"] = (wp["주문세션"] / wp["결제시작세션"] * 100).round(1)
-    fig1 = px.line(wp, x="주시작일", y="결제전환율", color="플랫폼", markers=True,
-                   title="주별 결제 전환율 (플랫폼별)")
+    fig1 = px.line(
+        wp,
+        x="주시작일",
+        y="결제전환율",
+        color="플랫폼",
+        markers=True,
+        title="주별 결제 전환율 (플랫폼별)",
+        labels={
+            "주시작일": "주 시작일",
+            "결제전환율": "결제 전환율(%)",
+            "플랫폼": "플랫폼",
+            "결제시작세션": "결제 시작 세션 수(개)",
+            "주문세션": "주문 완료 세션 수(개)",
+        },
+    )
     fig1.update_layout(yaxis_title="결제 전환율 (%)", xaxis_title="")
     left.plotly_chart(fig1, width="stretch")
 
@@ -239,15 +301,37 @@ with tab1:
     steps = {"1.방문": "세션수", "2.식당조회": "조회세션", "3.장바구니": "장바구니세션",
              "4.결제시작": "결제시작세션", "5.주문완료": "주문세션"}
     fun = pd.DataFrame({"단계": list(steps), "세션수": [f[c].sum() for c in steps.values()]})
-    fig2 = px.funnel(fun, x="세션수", y="단계", title="세션 퍼널")
+    fig2 = px.funnel(
+        fun,
+        x="세션수",
+        y="단계",
+        title="세션 퍼널",
+        labels={
+            "단계": "퍼널 단계",
+            "세션수": "세션 수(개)",
+        },
+    )
     right.plotly_chart(fig2, width="stretch")
 
     # 3-3. 유입 경로별 주문 전환율
     ws = f.groupby("유입경로")[["세션수", "주문세션"]].sum().reset_index()
     ws["주문전환율"] = (ws["주문세션"] / ws["세션수"] * 100).round(1)
     ws = ws.sort_values("주문전환율")
-    fig3 = px.bar(ws, x="주문전환율", y="유입경로", orientation="h", text_auto=".1f",
-                  hover_data=["세션수"], title="유입 경로별 주문 전환율")
+    fig3 = px.bar(
+        ws,
+        x="주문전환율",
+        y="유입경로",
+        orientation="h",
+        text_auto=".1f",
+        hover_data=["세션수"],
+        title="유입 경로별 주문 전환율",
+        labels={
+            "유입경로": "유입 경로",
+            "주문전환율": "주문 전환율(%)",
+            "세션수": "전체 세션 수(개)",
+            "주문세션": "주문 완료 세션 수(개)",
+        },
+    )
     fig3.update_xaxes(range=[0, ws["주문전환율"].max() * 1.2])
     fig3.update_layout(xaxis_title="주문 전환율 (%)", yaxis_title="")
     st.plotly_chart(fig3, width="stretch")
@@ -260,152 +344,200 @@ with tab2:
     # ------------------------------------------------------------
     st.subheader("집단 비교")
 
-    group_col = st.radio("비교 기준", options=["플랫폼", "유입경로"], horizontal=True)
+    group_col = st.radio(
+        "비교 기준",
+        options=["플랫폼", "유입경로"],
+        horizontal=True,
+        key=f"group_col_{k}",
+    )
+    group_label = "유입 경로" if group_col == "유입경로" else "플랫폼"
 
     step_cols = list(steps.values())
     step_names = list(steps.keys())
     grp = f.groupby(group_col, as_index=False)[step_cols].sum()
 
-    # 세션 수 500개 미만 집단 안내
+    # 세션 수 500개 미만 집단 처리
     small_groups = grp[grp["세션수"] < 500][group_col].tolist()
-    if small_groups:
-        st.caption(
-            f"⚠️ 세션 수가 500개 미만인 집단({', '.join(map(str, small_groups))})이 포함되어 있어 값이 크게 흔들릴 수 있습니다."
+    if exclude_small:
+        if small_groups:
+            st.caption(f"제외한 집단: {', '.join(map(str, small_groups))} (세션 500개 미만)")
+        grp = grp[grp["세션수"] >= 500]
+    else:
+        if small_groups:
+            st.caption(
+                f"⚠️ 세션 수가 500개 미만인 집단({', '.join(map(str, small_groups))})이 포함되어 있어 값이 크게 흔들릴 수 있습니다."
+            )
+
+    if grp.empty:
+        st.warning("세션 500개 이상인 집단이 없습니다. 필터나 고급 설정을 확인해 주세요.")
+    else:
+        cum_rows = []
+        step_rows = []
+
+        for _, row in grp.iterrows():
+            g_name = row[group_col]
+            base_sessions = row["세션수"]
+
+            # 1) 누적 전환율 데이터 (첫 단계 대비 %)
+            for s_name, s_col in steps.items():
+                s_val = row[s_col]
+                cum_rate = round(s_val / base_sessions * 100, 1) if base_sessions > 0 else 0.0
+                cum_rows.append(
+                    {
+                        group_col: g_name,
+                        "단계": s_name,
+                        "누적전환율": cum_rate,
+                        "세션수": int(s_val),
+                    }
+                )
+
+            # 2) 단계 전환율 데이터 (직전 단계 대비 %)
+            for i in range(1, len(step_cols)):
+                prev_col = step_cols[i - 1]
+                curr_col = step_cols[i]
+                prev_val = row[prev_col]
+                curr_val = row[curr_col]
+                s_rate = round(curr_val / prev_val * 100, 1) if prev_val > 0 else 0.0
+                step_rows.append(
+                    {
+                        group_col: g_name,
+                        "단계": f"{step_names[i - 1]} → {step_names[i]}",
+                        "단계전환율": s_rate,
+                        "기준세션": int(prev_val),
+                        "도달세션": int(curr_val),
+                    }
+                )
+
+        cum_df = pd.DataFrame(cum_rows)
+        step_df = pd.DataFrame(step_rows)
+
+        comp_left, comp_right = st.columns(2)
+
+        # 왼쪽: 누적 전환율(%) 퍼널
+        fig4 = px.funnel(
+            cum_df,
+            x="누적전환율",
+            y="단계",
+            color=group_col,
+            hover_data=["세션수"],
+            title=f"{group_col}별 누적 전환율 퍼널 (방문 대비 %)",
+            labels={
+                group_col: group_label,
+                "단계": "퍼널 단계",
+                "누적전환율": "누적 전환율(%)",
+                "세션수": "도달 세션 수(개)",
+            },
+        )
+        fig4.update_layout(xaxis_title="누적 전환율 (%)", yaxis_title="")
+        comp_left.plotly_chart(fig4, width="stretch")
+
+        # 오른쪽: 단계 전환율(%) 막대
+        fig5 = px.bar(
+            step_df,
+            x="단계",
+            y="단계전환율",
+            color=group_col,
+            barmode="group",
+            text_auto=".1f",
+            hover_data=["기준세션", "도달세션"],
+            title=f"{group_col}별 단계 전환율 (직전 단계 대비 %)",
+            labels={
+                group_col: group_label,
+                "단계": "전환 구간",
+                "단계전환율": "단계 전환율(%)",
+                "기준세션": "직전 단계 세션 수(개)",
+                "도달세션": "도달 단계 세션 수(개)",
+            },
+        )
+        fig5.update_yaxes(range=[0, step_df["단계전환율"].max() * 1.2])
+        fig5.update_layout(xaxis_title="", yaxis_title="단계 전환율 (%)")
+        comp_right.plotly_chart(fig5, width="stretch")
+
+        # ------------------------------------------------------------
+        # 5. 드릴다운: 언제부터, 무엇 때문일까
+        # ------------------------------------------------------------
+        st.divider()
+        st.subheader("드릴다운: 언제부터, 무엇 때문일까")
+
+        dd_col1, dd_col2 = st.columns(2)
+
+        available_groups = sorted(grp[group_col].unique())
+        target_group = dd_col1.selectbox(
+            "자세히 볼 집단",
+            options=available_groups,
+            key=f"target_group_{k}",
         )
 
-    cum_rows = []
-    step_rows = []
+        drill_steps = {
+            "방문 → 식당조회": ("세션수", "조회세션"),
+            "식당조회 → 장바구니": ("조회세션", "장바구니세션"),
+            "장바구니 → 결제시작": ("장바구니세션", "결제시작세션"),
+            "결제시작 → 주문": ("결제시작세션", "주문세션"),
+        }
+        target_step = dd_col2.selectbox(
+            "단계",
+            options=list(drill_steps.keys()),
+            key=f"target_step_{k}",
+        )
 
-    for _, row in grp.iterrows():
-        g_name = row[group_col]
-        base_sessions = row["세션수"]
+        other_col = "유입경로" if group_col == "플랫폼" else "플랫폼"
+        other_label = "유입 경로" if other_col == "유입경로" else "플랫폼"
+        prev_c, curr_c = drill_steps[target_step]
 
-        # 1) 누적 전환율 데이터 (첫 단계 대비 %)
-        for s_name, s_col in steps.items():
-            s_val = row[s_col]
-            cum_rate = round(s_val / base_sessions * 100, 1) if base_sessions > 0 else 0.0
-            cum_rows.append(
-                {
-                    group_col: g_name,
-                    "단계": s_name,
-                    "누적전환율": cum_rate,
-                    "세션수": int(s_val),
-                }
-            )
+        # 차트 ① (위): 고른 집단만 남긴 뒤, 다른 축으로 쪼개어 주별 전환율 선 차트
+        f_target = f[f[group_col] == target_group]
+        dd_weekly = f_target.groupby(["주시작일", other_col], as_index=False)[[prev_c, curr_c]].sum()
+        dd_weekly["전환율"] = (
+            dd_weekly[curr_c] / dd_weekly[prev_c].where(dd_weekly[prev_c] > 0) * 100
+        ).round(1)
 
-        # 2) 단계 전환율 데이터 (직전 단계 대비 %)
-        for i in range(1, len(step_cols)):
-            prev_col = step_cols[i - 1]
-            curr_col = step_cols[i]
-            prev_val = row[prev_col]
-            curr_val = row[curr_col]
-            s_rate = round(curr_val / prev_val * 100, 1) if prev_val > 0 else 0.0
-            step_rows.append(
-                {
-                    group_col: g_name,
-                    "단계": f"{step_names[i - 1]} → {step_names[i]}",
-                    "단계전환율": s_rate,
-                    "기준세션": int(prev_val),
-                    "도달세션": int(curr_val),
-                }
-            )
+        fig6 = px.line(
+            dd_weekly,
+            x="주시작일",
+            y="전환율",
+            color=other_col,
+            markers=True,
+            title=f"① {target_group}의 주별 {target_step} 전환율 — {other_col}별로 쪼개 보기",
+            labels={
+                "주시작일": "주 시작일",
+                "전환율": "단계 전환율(%)",
+                other_col: other_label,
+                prev_c: "직전 단계 세션 수(개)",
+                curr_c: "도달 단계 세션 수(개)",
+            },
+        )
+        fig6.update_layout(xaxis_title="", yaxis_title="전환율 (%)")
+        st.plotly_chart(fig6, width="stretch")
+        st.caption("모든 갈래가 같은 시점에 함께 움직였다면, 그 축은 원인이 아닙니다.")
 
-    cum_df = pd.DataFrame(cum_rows)
-    step_df = pd.DataFrame(step_rows)
+        # 차트 ② (아래): 주별 결제실패 건수 (고른 집단 vs 그 외)
+        fail_df = f.assign(
+            구분=f[group_col].where(f[group_col] == target_group, "그 외")
+        )
+        fail_weekly = fail_df.groupby(["주시작일", "구분"], as_index=False)["결제실패"].sum()
 
-    comp_left, comp_right = st.columns(2)
+        fig7 = px.bar(
+            fail_weekly,
+            x="주시작일",
+            y="결제실패",
+            color="구분",
+            barmode="group",
+            category_orders={"구분": [target_group, "그 외"]},
+            color_discrete_map={target_group: "#D62728", "그 외": "#B0B0B0"},
+            title=f"② 주별 결제실패 건수 — {target_group} vs 그 외",
+            labels={
+                "주시작일": "주 시작일",
+                "결제실패": "결제 실패 건수(건)",
+                "구분": "집단 구분",
+            },
+        )
+        fig7.update_layout(xaxis_title="", yaxis_title="결제실패 건수")
+        st.plotly_chart(fig7, width="stretch")
+        st.caption("문제가 생긴 시점과 함께 움직였다면 원인 후보입니다. 함께 움직였다고 원인이 확정되지는 않습니다.")
 
-    # 왼쪽: 누적 전환율(%) 퍼널
-    fig4 = px.funnel(
-        cum_df,
-        x="누적전환율",
-        y="단계",
-        color=group_col,
-        hover_data=["세션수"],
-        title=f"{group_col}별 누적 전환율 퍼널 (방문 대비 %)",
-    )
-    fig4.update_layout(xaxis_title="누적 전환율 (%)", yaxis_title="")
-    comp_left.plotly_chart(fig4, width="stretch")
-
-    # 오른쪽: 단계 전환율(%) 막대
-    fig5 = px.bar(
-        step_df,
-        x="단계",
-        y="단계전환율",
-        color=group_col,
-        barmode="group",
-        text_auto=".1f",
-        hover_data=["기준세션", "도달세션"],
-        title=f"{group_col}별 단계 전환율 (직전 단계 대비 %)",
-    )
-    fig5.update_yaxes(range=[0, step_df["단계전환율"].max() * 1.2])
-    fig5.update_layout(xaxis_title="", yaxis_title="단계 전환율 (%)")
-    comp_right.plotly_chart(fig5, width="stretch")
-
-    # ------------------------------------------------------------
-    # 5. 드릴다운: 언제부터, 무엇 때문일까
-    # ------------------------------------------------------------
-    st.divider()
-    st.subheader("드릴다운: 언제부터, 무엇 때문일까")
-
-    dd_col1, dd_col2 = st.columns(2)
-
-    available_groups = sorted(f[group_col].unique())
-    target_group = dd_col1.selectbox("자세히 볼 집단", options=available_groups)
-
-    drill_steps = {
-        "방문 → 식당조회": ("세션수", "조회세션"),
-        "식당조회 → 장바구니": ("조회세션", "장바구니세션"),
-        "장바구니 → 결제시작": ("장바구니세션", "결제시작세션"),
-        "결제시작 → 주문": ("결제시작세션", "주문세션"),
-    }
-    target_step = dd_col2.selectbox("단계", options=list(drill_steps.keys()))
-
-    other_col = "유입경로" if group_col == "플랫폼" else "플랫폼"
-    prev_c, curr_c = drill_steps[target_step]
-
-    # 차트 ① (위): 고른 집단만 남긴 뒤, 다른 축으로 쪼개어 주별 전환율 선 차트
-    f_target = f[f[group_col] == target_group]
-    dd_weekly = f_target.groupby(["주시작일", other_col], as_index=False)[[prev_c, curr_c]].sum()
-    dd_weekly["전환율"] = (
-        dd_weekly[curr_c] / dd_weekly[prev_c].where(dd_weekly[prev_c] > 0) * 100
-    ).round(1)
-
-    fig6 = px.line(
-        dd_weekly,
-        x="주시작일",
-        y="전환율",
-        color=other_col,
-        markers=True,
-        title=f"① {target_group}의 주별 {target_step} 전환율 — {other_col}별로 쪼개 보기",
-    )
-    fig6.update_layout(xaxis_title="", yaxis_title="전환율 (%)")
-    st.plotly_chart(fig6, width="stretch")
-    st.caption("모든 갈래가 같은 시점에 함께 움직였다면, 그 축은 원인이 아닙니다.")
-
-    # 차트 ② (아래): 주별 결제실패 건수 (고른 집단 vs 그 외)
-    fail_df = f.assign(
-        구분=f[group_col].where(f[group_col] == target_group, "그 외")
-    )
-    fail_weekly = fail_df.groupby(["주시작일", "구분"], as_index=False)["결제실패"].sum()
-
-    fig7 = px.bar(
-        fail_weekly,
-        x="주시작일",
-        y="결제실패",
-        color="구분",
-        barmode="group",
-        category_orders={"구분": [target_group, "그 외"]},
-        color_discrete_map={target_group: "#D62728", "그 외": "#B0B0B0"},
-        title=f"② 주별 결제실패 건수 — {target_group} vs 그 외",
-    )
-    fig7.update_layout(xaxis_title="", yaxis_title="결제실패 건수")
-    st.plotly_chart(fig7, width="stretch")
-    st.caption("문제가 생긴 시점과 함께 움직였다면 원인 후보입니다. 함께 움직였다고 원인이 확정되지는 않습니다.")
-
-    with st.expander(f"🤖 AI 해설 · {target_group}", expanded=False):
-        st.write(AI_NOTES.get(target_group, "이 집단의 해설은 아직 없습니다."))
-    st.caption(AI_SOURCE)
+        with st.expander(f"🤖 AI 해설 · {target_group}", expanded=False):
+            st.write(AI_NOTES.get(target_group, "이 집단의 해설은 아직 없습니다."))
+        st.caption(AI_SOURCE)
 
 with tab3:
     st.caption("탐색 결과에 따른 권장 액션과 후속 과제를 확인합니다.")
